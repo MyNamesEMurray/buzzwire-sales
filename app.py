@@ -190,6 +190,10 @@ def aux():
 def data(days):
     today = datetime.now(PT).date()
     iso = lambda d: d.isoformat()
+    if days == "all":
+        with lock:
+            first = con.execute("select min(date) from sales").fetchone()[0]
+        days = max(1, (today - datetime.strptime(first, "%Y-%m-%d").date()).days + 1) if first else 1
 
     def tot(a, b):
         with lock:
@@ -209,10 +213,12 @@ def data(days):
             " where s.date>=? group by s.country order by 3 desc limit 10", (start,)).fetchall()
         cur = con.execute("select count from players order by ts desc limit 1").fetchone()
         peak = con.execute("select max(count) from players where ts>?", (now - 86400,)).fetchone()[0]
+        bucket = 3600 if days <= 7 else 86400
         pser = con.execute(
-            "select ts/3600*3600, max(count) from players where ts>? group by 1 order by 1", (now - 172800,)).fetchall()
+            "select (ts/?)*?, max(count) from players where ts>? group by 1 order by 1",
+            (bucket, bucket, now - max(days, 2) * 86400)).fetchall()
         wl = con.execute(
-            "select date, adds, deletes, purchases, gifts from wishlist order by date desc limit 14").fetchall()
+            "select date, adds, deletes, purchases, gifts from wishlist where date>=? order by date desc", (start,)).fetchall()
     series = []
     for i in range(days):
         d = iso(today - timedelta(days=days - 1 - i))
@@ -230,8 +236,10 @@ def data(days):
         "players": {
             "now": cur[0] if cur else None,
             "peak24h": peak,
+            "bucket": bucket,
             "series": [{"t": t, "c": c} for t, c in pser],
         },
+        "days": days,
         "reviews": json.loads(meta("reviews") or "null"),
         "wishlist": [{"date": r[0], "adds": r[1], "deletes": r[2], "purchases": r[3], "gifts": r[4]} for r in wl],
         "checked": meta("checked"),
@@ -247,7 +255,8 @@ class H(BaseHTTPRequestHandler):
         u = urllib.parse.urlparse(self.path)
         if u.path == "/api/data":
             q = urllib.parse.parse_qs(u.query)
-            days = max(1, min(int(q.get("days", ["30"])[0]), 1000))
+            raw = q.get("days", ["30"])[0]
+            days = "all" if raw == "all" else max(1, min(int(raw), 1000))
             body, ctype = json.dumps(data(days)).encode(), "application/json"
         elif u.path == "/healthz":
             body, ctype = b"ok", "text/plain"

@@ -27,6 +27,7 @@ td,th{padding:6px 4px;text-align:right;border-bottom:1px solid #232733}
 td:first-child,th:first-child{text-align:left}
 th{color:var(--mute);font-weight:500;font-size:12px}
 #err{color:var(--bad)}
+.scroll{max-height:330px;overflow:auto}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 @media(max-width:760px){.grid{grid-template-columns:1fr}}
 </style>
@@ -43,16 +44,16 @@ th{color:var(--mute);font-weight:500;font-size:12px}
   <canvas id="chart" height="110"></canvas>
 </div>
 <div class="grid">
-  <div class="panel"><b>Concurrent players (48h, hourly peak)</b><canvas id="pchart" height="150"></canvas></div>
-  <div class="panel"><b>Wishlist (last 14 days, GMT)</b><table id="wish"></table></div>
+  <div class="panel"><b id="ptitle">Concurrent players</b><canvas id="pchart" height="150"></canvas></div>
+  <div class="panel"><b>Wishlist (GMT)</b><div class="scroll"><table id="wish"></table></div></div>
 </div>
 <div class="grid">
   <div class="panel"><b>Top countries</b><table id="countries"></table></div>
-  <div class="panel"><b>Recent days</b><table id="days"></table></div>
+  <div class="panel"><b>Daily breakdown</b><div class="scroll"><table id="days"></table></div></div>
 </div>
 <div class="mute">Steam revenue is before refund adjustments, taxes and the Steam cut. Sales dates are Pacific Time.</div>
 <script>
-let days=+localStorage.days||30,chart,pchart;
+let days=localStorage.days||'30',chart,pchart;
 const usd=n=>n.toLocaleString(undefined,{style:'currency',currency:'USD'});
 const int=n=>Math.round(n).toLocaleString();
 const ago=s=>{if(!s)return'never';const m=Math.round((Date.now()-new Date(s))/60000);return m<1?'just now':m+' min ago'};
@@ -78,19 +79,20 @@ function draw(d){
       x:{ticks:{color:'#8b93a3',maxTicksLimit:12},grid:{display:false}},
       y:{ticks:{color:'#8b93a3'},grid:{color:'#232733'}},
       y1:{position:'right',ticks:{color:'#8b93a3',precision:0},grid:{display:false},beginAtZero:true}}}});
-  const ps=d.players.series;
-  const pdata={labels:ps.map(s=>new Date(s.t*1000).toLocaleString([], {weekday:'short',hour:'numeric'})),datasets:[{label:'Players',data:ps.map(s=>s.c),borderColor:'#ffb020',backgroundColor:'#ffb020',pointRadius:0,tension:.2}]};
+  const ps=d.players.series,hourly=d.players.bucket<86400;
+  document.getElementById('ptitle').textContent='Concurrent players ('+(hourly?'hourly':'daily')+' peak, '+d.days+'d)';
+  const pdata={labels:ps.map(s=>new Date(s.t*1000).toLocaleString([],hourly?{weekday:'short',hour:'numeric'}:{month:'numeric',day:'numeric'})),datasets:[{label:'Players',data:ps.map(s=>s.c),borderColor:'#ffb020',backgroundColor:'#ffb020',pointRadius:0,tension:.2}]};
   if(pchart){pchart.data=pdata;pchart.update()}else pchart=new Chart(document.getElementById('pchart'),{type:'line',data:pdata,options:{animation:false,plugins:{legend:{display:false}},scales:axes()}});
 }
 function tables(d){
   const h='<tr><th></th><th>Units</th><th>Revenue</th></tr>';
   document.getElementById('countries').innerHTML=h+d.countries.map(c=>`<tr><td>${c.name}</td><td>${int(c.units)}</td><td>${usd(c.usd)}</td></tr>`).join('');
-  document.getElementById('days').innerHTML=h+d.series.slice(-10).reverse().map(s=>`<tr><td>${s.date}</td><td>${int(s.units)}</td><td>${usd(s.usd)}</td></tr>`).join('');
+  document.getElementById('days').innerHTML=h+d.series.slice().reverse().map(s=>`<tr><td>${s.date}</td><td>${int(s.units)}</td><td>${usd(s.usd)}</td></tr>`).join('');
   document.getElementById('wish').innerHTML='<tr><th></th><th>Adds</th><th>Deletes</th><th>Bought</th></tr>'+
     d.wishlist.map(w=>`<tr><td>${w.date}</td><td>${int(w.adds)}</td><td>${int(w.deletes)}</td><td>${int(w.purchases)}</td></tr>`).join('');
 }
 function btns(){
-  document.getElementById('range').innerHTML=[14,30,90,365].map(n=>`<button class="${n==days?'on':''}" onclick="days=${n};localStorage.days=${n};load()">${n}d</button>`).join('');
+  document.getElementById('range').innerHTML=['14','30','90','365','all'].map(n=>`<button class="${n==days?'on':''}" onclick="days='${n}';localStorage.days='${n}';load()">${n=='all'?'All':n+'d'}</button>`).join('');
 }
 async function load(){
   try{
