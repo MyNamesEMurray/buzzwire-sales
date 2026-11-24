@@ -37,40 +37,57 @@ th{color:var(--mute);font-weight:500;font-size:12px}
   <div class="mute">Synced <span id="sync">-</span> <span id="err"></span></div>
 </header>
 <div class="cards" id="cards"></div>
+<div class="cards" id="cards2"></div>
 <div class="panel">
   <div class="row"><b>Daily</b><div id="range"></div></div>
   <canvas id="chart" height="110"></canvas>
 </div>
 <div class="grid">
+  <div class="panel"><b>Concurrent players (48h, hourly peak)</b><canvas id="pchart" height="150"></canvas></div>
+  <div class="panel"><b>Wishlist (last 14 days, GMT)</b><table id="wish"></table></div>
+</div>
+<div class="grid">
   <div class="panel"><b>Top countries</b><table id="countries"></table></div>
   <div class="panel"><b>Recent days</b><table id="days"></table></div>
 </div>
-<div class="mute">Steam revenue is before refund adjustments, taxes and the Steam cut. Dates are Pacific Time.</div>
+<div class="mute">Steam revenue is before refund adjustments, taxes and the Steam cut. Sales dates are Pacific Time.</div>
 <script>
-let days=+localStorage.days||30,chart;
+let days=+localStorage.days||30,chart,pchart;
 const usd=n=>n.toLocaleString(undefined,{style:'currency',currency:'USD'});
 const int=n=>Math.round(n).toLocaleString();
 const ago=s=>{if(!s)return'never';const m=Math.round((Date.now()-new Date(s))/60000);return m<1?'just now':m+' min ago'};
+const card=(l,v,s,live)=>`<div class="card${live?' live':''}"><div class="l">${l}</div><div class="v">${v}</div><div class="s">${s||'&nbsp;'}</div></div>`;
 function cards(d){
   const c=[['Today',d.today,1],['Yesterday',d.yesterday],['7 days',d.d7],['30 days',d.d30],['Lifetime',d.all]];
   document.getElementById('cards').innerHTML=c.map(([l,t,live])=>
-    `<div class="card${live?' live':''}"><div class="l">${l}</div><div class="v">${int(t.units)}</div><div class="s">${usd(t.usd)}${t.returned?` · ${int(t.returned)} returned`:''}</div></div>`).join('');
+    card(l,int(t.units),usd(t.usd)+(t.returned?` · ${int(t.returned)} returned`:''),live)).join('');
+  const p=d.players,r=d.reviews,w=d.wishlist[0];
+  document.getElementById('cards2').innerHTML=[
+    card('Players now',p.now==null?'-':int(p.now),p.peak24h==null?'':'24h peak '+int(p.peak24h),1),
+    card('Reviews',r&&r.total_reviews?Math.round(100*r.total_positive/r.total_reviews)+'%':'-',r?`${int(r.total_reviews)} total · ${r.review_score_desc||''}`:''),
+    card('Wishlist adds',w?int(w.adds):'-',w?`${w.date} · net ${int(w.adds-w.deletes)} · ${int(w.purchases)} bought`:'')
+  ].join('');
 }
+const axes=()=>({x:{ticks:{color:'#8b93a3',maxTicksLimit:12},grid:{display:false}},y:{ticks:{color:'#8b93a3',precision:0},grid:{color:'#232733'},beginAtZero:true}});
 function draw(d){
   const labels=d.series.map(s=>s.date.slice(5));
-  const cfg={type:'bar',data:{labels,datasets:[
+  const data={labels,datasets:[
     {label:'Revenue',data:d.series.map(s=>s.usd),backgroundColor:'#ffb020',yAxisID:'y'},
-    {label:'Units',type:'line',data:d.series.map(s=>s.units),borderColor:'#4cc9f0',backgroundColor:'#4cc9f0',yAxisID:'y1',tension:.2}]},
-    options:{animation:false,plugins:{legend:{labels:{color:'#8b93a3'}}},scales:{
+    {label:'Units',type:'line',data:d.series.map(s=>s.units),borderColor:'#4cc9f0',backgroundColor:'#4cc9f0',yAxisID:'y1',tension:.2}]};
+  if(chart){chart.data=data;chart.update()}else chart=new Chart(document.getElementById('chart'),{type:'bar',data,options:{animation:false,plugins:{legend:{labels:{color:'#8b93a3'}}},scales:{
       x:{ticks:{color:'#8b93a3',maxTicksLimit:12},grid:{display:false}},
       y:{ticks:{color:'#8b93a3'},grid:{color:'#232733'}},
-      y1:{position:'right',ticks:{color:'#8b93a3',precision:0},grid:{display:false},beginAtZero:true}}}};
-  if(chart){chart.data=cfg.data;chart.update()}else chart=new Chart(document.getElementById('chart'),cfg);
+      y1:{position:'right',ticks:{color:'#8b93a3',precision:0},grid:{display:false},beginAtZero:true}}}});
+  const ps=d.players.series;
+  const pdata={labels:ps.map(s=>new Date(s.t*1000).toLocaleString([], {weekday:'short',hour:'numeric'})),datasets:[{label:'Players',data:ps.map(s=>s.c),borderColor:'#ffb020',backgroundColor:'#ffb020',pointRadius:0,tension:.2}]};
+  if(pchart){pchart.data=pdata;pchart.update()}else pchart=new Chart(document.getElementById('pchart'),{type:'line',data:pdata,options:{animation:false,plugins:{legend:{display:false}},scales:axes()}});
 }
 function tables(d){
   const h='<tr><th></th><th>Units</th><th>Revenue</th></tr>';
   document.getElementById('countries').innerHTML=h+d.countries.map(c=>`<tr><td>${c.name}</td><td>${int(c.units)}</td><td>${usd(c.usd)}</td></tr>`).join('');
   document.getElementById('days').innerHTML=h+d.series.slice(-10).reverse().map(s=>`<tr><td>${s.date}</td><td>${int(s.units)}</td><td>${usd(s.usd)}</td></tr>`).join('');
+  document.getElementById('wish').innerHTML='<tr><th></th><th>Adds</th><th>Deletes</th><th>Bought</th></tr>'+
+    d.wishlist.map(w=>`<tr><td>${w.date}</td><td>${int(w.adds)}</td><td>${int(w.deletes)}</td><td>${int(w.purchases)}</td></tr>`).join('');
 }
 function btns(){
   document.getElementById('range').innerHTML=[14,30,90,365].map(n=>`<button class="${n==days?'on':''}" onclick="days=${n};localStorage.days=${n};load()">${n}d</button>`).join('');
@@ -80,7 +97,8 @@ async function load(){
     const d=await (await fetch('/api/data?days='+days)).json();
     cards(d);draw(d);tables(d);btns();
     document.getElementById('sync').textContent=ago(d.ok);
-    document.getElementById('err').textContent=d.error&&d.error!=='-'?' | '+d.error:'';
+    const e=[d.error,d.aux_error].filter(x=>x&&x!=='-').join(' | ');
+    document.getElementById('err').textContent=e?' | '+e:'';
   }catch(e){document.getElementById('err').textContent='dashboard offline'}
 }
 load();setInterval(load,30000);

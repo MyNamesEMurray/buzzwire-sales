@@ -15,7 +15,10 @@ Self-hosted Steam sales dashboard. Python stdlib, SQLite, one container.
 | --- | --- | --- |
 | `STEAM_FINANCIAL_KEY` | required | Financial API key |
 | `APP_IDS` | all | Comma list of app IDs to keep |
-| `POLL_SECONDS` | 120 | Steam poll interval |
+| `POLL_SECONDS` | 120 | Steam sales poll interval |
+| `PLAYER_POLL_SECONDS` | 300 | Current players sample interval (reviews every 3rd, wishlist every 6th tick) |
+
+Players, reviews and wishlist need one app ID. Set `APP_IDS`, or leave it empty if your sales contain exactly one app.
 
 ## Notes
 

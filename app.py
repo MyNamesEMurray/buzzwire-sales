@@ -5,7 +5,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 KEY = os.environ.get("STEAM_FINANCIAL_KEY", "")
 APPS = {int(x) for x in os.environ.get("APP_IDS", "").split(",") if x.strip()}
 POLL = int(os.environ.get("POLL_SECONDS", "120"))
+PLAYER_POLL = int(os.environ.get("PLAYER_POLL_SECONDS", "300"))
 DB = os.environ.get("DB_PATH", "/data/sales.db")
 PORT = int(os.environ.get("PORT", "8080"))
 BASE = os.environ.get("STEAM_API_BASE", "https://partner.steam-api.com/IPartnerFinancialsService/")
@@ -29,6 +30,9 @@ create table if not exists sales(
 create index if not exists sales_date on sales(date);
 create table if not exists names(kind text, id text, name text, primary key(kind, id));
 create table if not exists meta(k text primary key, v text);
+create table if not exists players(ts int, count int);
+create index if not exists players_ts on players(ts);
+create table if not exists wishlist(date text primary key, adds real, deletes real, purchases real, gifts real);
 """)
 
 
@@ -38,6 +42,11 @@ def meta(k, v=None):
             r = con.execute("select v from meta where k=?", (k,)).fetchone()
             return r[0] if r else ""
         con.execute("insert or replace into meta values(?,?)", (k, str(v)))
+
+
+def getj(url):
+    with urllib.request.urlopen(url, timeout=30) as r:
+        return json.load(r)
 
 
 def call(method, **params):
@@ -104,6 +113,79 @@ def loop():
         time.sleep(POLL)
 
 
+def app_id():
+    if APPS:
+        return min(APPS)
+    with lock:
+        r = con.execute("select distinct appid from sales where appid is not null limit 2").fetchall()
+    return r[0][0] if len(r) == 1 else None
+
+
+def players(aid):
+    c = getj(f"https://api.steampowered.com/ISteamUserStats/GetNumberOfCurrentPlayers/v1/?appid={aid}")["response"]["player_count"]
+    with lock, con:
+        con.execute("insert into players values(?,?)", (int(time.time()), int(c)))
+
+
+def reviews(aid):
+    j = getj(f"https://store.steampowered.com/appreviews/{aid}?json=1&language=all&purchase_type=all&num_per_page=0")
+    meta("reviews", json.dumps(j["query_summary"]))
+
+
+def wishlist(aid):
+    with lock:
+        have = con.execute("select count(*) from wishlist").fetchone()[0]
+    today = datetime.now(timezone.utc).date()
+    err, got = None, 0
+    for i in range(1, (3 if have else 30) + 1):
+        d = (today - timedelta(days=i)).isoformat()
+        try:
+            s = call("GetAppWishlistReporting", appid=aid, date=d).get("wishlist_summary", {})
+        except Exception as e:
+            err = e
+            continue
+        with lock, con:
+            con.execute("insert or replace into wishlist values(?,?,?,?,?)", (
+                d, num(s.get("wishlist_adds")), num(s.get("wishlist_deletes")),
+                num(s.get("wishlist_purchases")), num(s.get("wishlist_gifts"))))
+        got += 1
+        time.sleep(0.3)
+    if err and not got:
+        raise err
+
+
+def attempt(errs, name, f, *a):
+    try:
+        f(*a)
+    except Exception as e:
+        errs.append(f"{name}: {type(e).__name__}: {e}")
+
+
+def aux_tick(n):
+    aid = app_id()
+    if not aid:
+        meta("aerr", "app id unknown: set APP_IDS")
+        return False
+    errs = []
+    attempt(errs, "players", players, aid)
+    if n % 3 == 0:
+        attempt(errs, "reviews", reviews, aid)
+    if n % 6 == 0:
+        attempt(errs, "wishlist", wishlist, aid)
+    meta("aerr", "; ".join(errs) or "-")
+    return True
+
+
+def aux():
+    n = 0
+    while True:
+        if aux_tick(n):
+            n += 1
+            time.sleep(PLAYER_POLL)
+        else:
+            time.sleep(30)
+
+
 def data(days):
     today = datetime.now(PT).date()
     iso = lambda d: d.isoformat()
@@ -116,6 +198,7 @@ def data(days):
         return {"units": r[0], "usd": r[1], "returned": r[2]}
 
     start = iso(today - timedelta(days=days - 1))
+    now = int(time.time())
     with lock:
         daily = {r[0]: r[1:] for r in con.execute(
             "select date, sum(net_units), sum(net_usd) from sales where date>=? group by date", (start,))}
@@ -123,6 +206,12 @@ def data(days):
             "select coalesce(n.name, s.country), sum(s.net_units), sum(s.net_usd) from sales s"
             " left join names n on n.kind='country' and n.id=s.country"
             " where s.date>=? group by s.country order by 3 desc limit 10", (start,)).fetchall()
+        cur = con.execute("select count from players order by ts desc limit 1").fetchone()
+        peak = con.execute("select max(count) from players where ts>?", (now - 86400,)).fetchone()[0]
+        pser = con.execute(
+            "select ts/3600*3600, max(count) from players where ts>? group by 1 order by 1", (now - 172800,)).fetchall()
+        wl = con.execute(
+            "select date, adds, deletes, purchases, gifts from wishlist order by date desc limit 14").fetchall()
     series = []
     for i in range(days):
         d = iso(today - timedelta(days=days - 1 - i))
@@ -137,9 +226,17 @@ def data(days):
         "all": tot("0000-00-00", "9999-99-99"),
         "series": series,
         "countries": [{"name": c[0], "units": c[1], "usd": c[2]} for c in countries],
+        "players": {
+            "now": cur[0] if cur else None,
+            "peak24h": peak,
+            "series": [{"t": t, "c": c} for t, c in pser],
+        },
+        "reviews": json.loads(meta("reviews") or "null"),
+        "wishlist": [{"date": r[0], "adds": r[1], "deletes": r[2], "purchases": r[3], "gifts": r[4]} for r in wl],
         "checked": meta("checked"),
         "ok": meta("ok"),
         "error": meta("err"),
+        "aux_error": meta("aerr"),
         "poll": POLL,
     }
 
@@ -173,4 +270,5 @@ if __name__ == "__main__":
     if not KEY:
         raise SystemExit("STEAM_FINANCIAL_KEY not set")
     threading.Thread(target=loop, daemon=True).start()
+    threading.Thread(target=aux, daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", PORT), H).serve_forever()
