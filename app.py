@@ -128,10 +128,8 @@ def players(aid):
 
 
 def reviews(aid):
-    try:
-        j = getj(f"https://store.steampowered.com/appreviews/{aid}?json=1&language=all&purchase_type=all&num_per_page=0")["query_summary"]
-    except (ValueError, KeyError):
-        j = {"total_positive": 0, "total_negative": 0, "total_reviews": 0, "review_score_desc": "No reviews yet"}
+    q = urllib.parse.urlencode({"input_json": json.dumps({"appid": aid, "num_per_page": 1, "languages": ["all"]})})
+    j = getj(f"https://api.steampowered.com/IUserReviewsService/GetAppReviews/v1/?{q}")["response"]["query_summary"]
     meta("reviews", json.dumps(j))
 
 
