@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>buzzwire-sales</Name>
+  <Repository>ghcr.io/mynamesemurray/buzzwire-sales:latest</Repository>
+  <Registry>https://github.com/MyNamesEMurray/buzzwire-sales/pkgs/container/buzzwire-sales</Registry>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/MyNamesEMurray/buzzwire-sales</Support>
+  <Project>https://github.com/MyNamesEMurray/buzzwire-sales</Project>
+  <Overview>Self-hosted Steam sales dashboard. Polls the Steamworks Financial API and shows units and revenue.</Overview>
+  <Category>Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8080]/</WebUI>
+  <ExtraParams/>
+  <PostArgs/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+  <Config Name="WebUI Port" Target="8080" Default="8095" Mode="tcp" Description="Dashboard port" Type="Port" Display="always" Required="true" Mask="false">8095</Config>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/buzzwire-sales" Mode="rw" Description="SQLite database" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/buzzwire-sales</Config>
+  <Config Name="Steam Financial API Key" Target="STEAM_FINANCIAL_KEY" Default="" Mode="" Description="Steamworks Financial API Group key" Type="Variable" Display="always" Required="true" Mask="true"/>
+  <Config Name="App IDs" Target="APP_IDS" Default="" Mode="" Description="Optional comma list of app IDs to keep. Empty keeps all." Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="Poll Seconds" Target="POLL_SECONDS" Default="120" Mode="" Description="Steam poll interval" Type="Variable" Display="advanced" Required="false" Mask="false">120</Config>
+</Container>
