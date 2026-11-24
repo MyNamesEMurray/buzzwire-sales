@@ -1,0 +1,12 @@
+services:
+  buzzwire-sales:
+    image: ghcr.io/mynamesemurray/buzzwire-sales:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+    environment:
+      STEAM_FINANCIAL_KEY: ${STEAM_FINANCIAL_KEY}
+      APP_IDS: ${APP_IDS:-}
+      POLL_SECONDS: ${POLL_SECONDS:-120}

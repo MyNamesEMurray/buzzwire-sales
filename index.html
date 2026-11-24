@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Buzzwire Sales</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+:root{--bg:#0f1115;--card:#181b22;--fg:#e8eaf0;--mute:#8b93a3;--acc:#ffb020;--acc2:#4cc9f0;--bad:#ff6b6b}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.4 system-ui,sans-serif;padding:20px;max-width:1100px;margin-inline:auto}
+header{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px}
+h1{margin:0;font-size:22px}
+.mute{color:var(--mute);font-size:13px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin:16px 0}
+.card{background:var(--card);border-radius:10px;padding:14px}
+.card .l{color:var(--mute);font-size:12px;text-transform:uppercase;letter-spacing:.05em}
+.card .v{font-size:26px;font-weight:700;margin-top:4px}
+.card .s{color:var(--mute);font-size:13px}
+.card.live .v{color:var(--acc)}
+.panel{background:var(--card);border-radius:10px;padding:14px;margin-bottom:12px}
+.row{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+button{background:#232733;color:var(--fg);border:0;border-radius:6px;padding:5px 10px;cursor:pointer;margin-left:4px}
+button.on{background:var(--acc);color:#000}
+table{width:100%;border-collapse:collapse}
+td,th{padding:6px 4px;text-align:right;border-bottom:1px solid #232733}
+td:first-child,th:first-child{text-align:left}
+th{color:var(--mute);font-weight:500;font-size:12px}
+#err{color:var(--bad)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:760px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Buzzwire Sales</h1>
+  <div class="mute">Synced <span id="sync">-</span> <span id="err"></span></div>
+</header>
+<div class="cards" id="cards"></div>
+<div class="panel">
+  <div class="row"><b>Daily</b><div id="range"></div></div>
+  <canvas id="chart" height="110"></canvas>
+</div>
+<div class="grid">
+  <div class="panel"><b>Top countries</b><table id="countries"></table></div>
+  <div class="panel"><b>Recent days</b><table id="days"></table></div>
+</div>
+<div class="mute">Steam revenue is before refund adjustments, taxes and the Steam cut. Dates are Pacific Time.</div>
+<script>
+let days=+localStorage.days||30,chart;
+const usd=n=>n.toLocaleString(undefined,{style:'currency',currency:'USD'});
+const int=n=>Math.round(n).toLocaleString();
+const ago=s=>{if(!s)return'never';const m=Math.round((Date.now()-new Date(s))/60000);return m<1?'just now':m+' min ago'};
+function cards(d){
+  const c=[['Today',d.today,1],['Yesterday',d.yesterday],['7 days',d.d7],['30 days',d.d30],['Lifetime',d.all]];
+  document.getElementById('cards').innerHTML=c.map(([l,t,live])=>
+    `<div class="card${live?' live':''}"><div class="l">${l}</div><div class="v">${int(t.units)}</div><div class="s">${usd(t.usd)}${t.returned?` · ${int(t.returned)} returned`:''}</div></div>`).join('');
+}
+function draw(d){
+  const labels=d.series.map(s=>s.date.slice(5));
+  const cfg={type:'bar',data:{labels,datasets:[
+    {label:'Revenue',data:d.series.map(s=>s.usd),backgroundColor:'#ffb020',yAxisID:'y'},
+    {label:'Units',type:'line',data:d.series.map(s=>s.units),borderColor:'#4cc9f0',backgroundColor:'#4cc9f0',yAxisID:'y1',tension:.2}]},
+    options:{animation:false,plugins:{legend:{labels:{color:'#8b93a3'}}},scales:{
+      x:{ticks:{color:'#8b93a3',maxTicksLimit:12},grid:{display:false}},
+      y:{ticks:{color:'#8b93a3'},grid:{color:'#232733'}},
+      y1:{position:'right',ticks:{color:'#8b93a3',precision:0},grid:{display:false},beginAtZero:true}}}};
+  if(chart){chart.data=cfg.data;chart.update()}else chart=new Chart(document.getElementById('chart'),cfg);
+}
+function tables(d){
+  const h='<tr><th></th><th>Units</th><th>Revenue</th></tr>';
+  document.getElementById('countries').innerHTML=h+d.countries.map(c=>`<tr><td>${c.name}</td><td>${int(c.units)}</td><td>${usd(c.usd)}</td></tr>`).join('');
+  document.getElementById('days').innerHTML=h+d.series.slice(-10).reverse().map(s=>`<tr><td>${s.date}</td><td>${int(s.units)}</td><td>${usd(s.usd)}</td></tr>`).join('');
+}
+function btns(){
+  document.getElementById('range').innerHTML=[14,30,90,365].map(n=>`<button class="${n==days?'on':''}" onclick="days=${n};localStorage.days=${n};load()">${n}d</button>`).join('');
+}
+async function load(){
+  try{
+    const d=await (await fetch('/api/data?days='+days)).json();
+    cards(d);draw(d);tables(d);btns();
+    document.getElementById('sync').textContent=ago(d.ok);
+    document.getElementById('err').textContent=d.error&&d.error!=='-'?' | '+d.error:'';
+  }catch(e){document.getElementById('err').textContent='dashboard offline'}
+}
+load();setInterval(load,30000);
+</script>
+</body>
+</html>
